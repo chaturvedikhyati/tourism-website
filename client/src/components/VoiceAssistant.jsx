@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Mic, MicOff, Volume2, VolumeX, X, Send, AlertCircle, Bot, User } from 'lucide-react';
 import { DESTINATION_DATA } from '../data/destinationData';
 
@@ -18,6 +18,7 @@ export default function VoiceAssistant({ isOpen, onClose }) {
   const recognitionRef = useRef(null);
   const chatEndRef = useRef(null);
   const transcriptRef = useRef('');
+  const handleSendMessageRef = useRef(null);
 
   // Auto scroll chat
   useEffect(() => {
@@ -29,104 +30,32 @@ export default function VoiceAssistant({ isOpen, onClose }) {
     transcriptRef.current = transcript;
   }, [transcript]);
 
-  // Setup Web Speech Recognition API (Hindi hi-IN)
-  useEffect(() => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = false;
-      recognition.interimResults = true;
-      recognition.lang = 'hi-IN';
-
-      recognition.onstart = () => {
-        setIsListening(true);
-        setErrorMsg('');
-      };
-
-      recognition.onresult = (event) => {
-        let currentTranscript = '';
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          currentTranscript += event.results[i][0].transcript;
-        }
-        setTranscript(currentTranscript);
-      };
-
-      recognition.onerror = (event) => {
-        console.error('Speech recognition error:', event.error);
-        setIsListening(false);
-        if (event.error === 'not-allowed') {
-          setErrorMsg('ब्राउज़र में माइक अनुमति (Microphone Permission) बंद है। कृपया एड्रेस बार में माइक आइकॉन पर क्लिक करके Permission allow करें।');
-        } else if (event.error !== 'no-speech') {
-          setErrorMsg('आवाज़ पहचानने में समस्या आई। कृपया पुनः बोलें या टाइप करें।');
-        }
-      };
-
-      recognition.onend = () => {
-        setIsListening(false);
-        // Auto send transcript when user finishes speaking
-        const capturedText = transcriptRef.current.trim();
-        if (capturedText) {
-          handleSendMessage(capturedText);
-        }
-      };
-
-      recognitionRef.current = recognition;
-    } else {
-      setErrorMsg('आपका ब्राउज़र वॉइस इनपुट सपोर्ट नहीं करता। कृपया Google Chrome या Microsoft Edge का प्रयोग करें।');
-    }
-  }, []);
-
-  // Stop TTS when closing
-  useEffect(() => {
-    if (!isOpen && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-      setIsSpeaking(false);
-    }
-  }, [isOpen]);
-
-  // Handle voice recording toggle
-  const toggleListening = () => {
-    if (!recognitionRef.current) {
-      setErrorMsg('कृपया Google Chrome या Microsoft Edge ब्राउज़र का प्रयोग करें।');
-      return;
-    }
-
-    if (isListening) {
-      recognitionRef.current.stop();
-      setIsListening(false);
-    } else {
-      setTranscript('');
-      transcriptRef.current = '';
-      try {
-        recognitionRef.current.start();
-      } catch (err) {
-        console.warn('Recognition start error:', err);
-      }
-    }
-  };
-
   // Text-To-Speech (Hindi TTS)
-  const speakText = (text) => {
+  const speakText = useCallback((text) => {
     if (!window.speechSynthesis) return;
 
-    window.speechSynthesis.cancel();
+    try {
+      window.speechSynthesis.cancel();
 
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'hi-IN';
-    utterance.rate = 0.95;
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'hi-IN';
+      utterance.rate = 0.95;
 
-    const voices = window.speechSynthesis.getVoices();
-    const hindiVoice = voices.find(v => v.lang.includes('hi') || v.name.includes('Hindi') || v.lang.includes('IN'));
-    if (hindiVoice) {
-      utterance.voice = hindiVoice;
+      const voices = window.speechSynthesis.getVoices();
+      const hindiVoice = voices.find(v => v.lang.includes('hi') || v.name.includes('Hindi') || v.lang.includes('IN'));
+      if (hindiVoice) {
+        utterance.voice = hindiVoice;
+      }
+
+      utterance.onstart = () => setIsSpeaking(true);
+      utterance.onend = () => setIsSpeaking(false);
+      utterance.onerror = () => setIsSpeaking(false);
+
+      window.speechSynthesis.speak(utterance);
+    } catch (e) {
+      console.warn('TTS error:', e);
     }
-
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
-
-    window.speechSynthesis.speak(utterance);
-  };
+  }, []);
 
   const stopSpeaking = () => {
     if (window.speechSynthesis) {
@@ -136,8 +65,8 @@ export default function VoiceAssistant({ isOpen, onClose }) {
   };
 
   // Send question to API
-  const handleSendMessage = async (textToSend) => {
-    const queryText = (textToSend || transcript).trim();
+  const handleSendMessage = useCallback(async (textToSend) => {
+    const queryText = (textToSend || transcriptRef.current).trim();
     if (!queryText || isLoading) return;
 
     const userMsg = { sender: 'user', text: queryText };
@@ -170,6 +99,86 @@ export default function VoiceAssistant({ isOpen, onClose }) {
       setMessages(prev => [...prev, { sender: 'ai', text: fallbackReply }]);
       setIsLoading(false);
       speakText(fallbackReply);
+    }
+  }, [isLoading, speakText]);
+
+  // Keep handleSendMessageRef updated
+  useEffect(() => {
+    handleSendMessageRef.current = handleSendMessage;
+  }, [handleSendMessage]);
+
+  // Setup Web Speech Recognition API (Hindi hi-IN)
+  useEffect(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = 'hi-IN';
+
+      recognition.onstart = () => {
+        setIsListening(true);
+        setErrorMsg('');
+      };
+
+      recognition.onresult = (event) => {
+        let currentTranscript = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          currentTranscript += event.results[i][0].transcript;
+        }
+        setTranscript(currentTranscript);
+      };
+
+      recognition.onerror = (event) => {
+        console.error('Speech recognition error:', event.error);
+        setIsListening(false);
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+          setErrorMsg('माइक की अनुमति बंद है। एड्रेस बार में लॉक (🔒) पर क्लिक करके Microhone ALLOW करें।');
+        } else if (event.error !== 'no-speech') {
+          setErrorMsg('आवाज़ पहचानने में समस्या आई। कृपया पुनः बोलें या टाइप करें।');
+        }
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+        const capturedText = transcriptRef.current.trim();
+        if (capturedText && handleSendMessageRef.current) {
+          handleSendMessageRef.current(capturedText);
+        }
+      };
+
+      recognitionRef.current = recognition;
+    } else {
+      setErrorMsg('आपका ब्राउज़र वॉइस इनपुट सपोर्ट नहीं करता। कृपया Google Chrome या Microsoft Edge का प्रयोग करें।');
+    }
+  }, []);
+
+  // Stop TTS when closing modal
+  useEffect(() => {
+    if (!isOpen && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
+    }
+  }, [isOpen]);
+
+  // Handle voice recording toggle
+  const toggleListening = () => {
+    if (!recognitionRef.current) {
+      setErrorMsg('कृपया Google Chrome या Microsoft Edge ब्राउज़र का प्रयोग करें।');
+      return;
+    }
+
+    if (isListening) {
+      recognitionRef.current.stop();
+      setIsListening(false);
+    } else {
+      setTranscript('');
+      transcriptRef.current = '';
+      try {
+        recognitionRef.current.start();
+      } catch (err) {
+        console.warn('Recognition start error:', err);
+      }
     }
   };
 
@@ -322,13 +331,13 @@ export default function VoiceAssistant({ isOpen, onClose }) {
             type="text"
             value={transcript}
             onChange={(e) => setTranscript(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+            onKeyDown={(e) => e.key === 'Enter' && handleSendMessage(transcript)}
             placeholder="हिंदी में सवाल टाइप करें या माइक बटन दबाएं..."
             className="flex-1 bg-sandstone-50 border border-sandstone-300 rounded-lg px-4 py-2.5 text-sm text-earth-900 placeholder-earth-700 focus:outline-none focus:border-terracotta-700"
           />
 
           <button
-            onClick={() => handleSendMessage()}
+            onClick={() => handleSendMessage(transcript)}
             disabled={!transcript.trim() || isLoading}
             className="bg-earth-900 hover:bg-earth-800 disabled:opacity-50 text-sandstone-50 p-2.5 rounded-lg transition-colors flex-shrink-0"
           >
