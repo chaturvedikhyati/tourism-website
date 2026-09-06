@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Volume2, VolumeX, X, Send, Sparkles, AlertCircle, RefreshCw, Bot, User } from 'lucide-react';
+import { Mic, MicOff, Volume2, VolumeX, X, Send, AlertCircle, Bot, User } from 'lucide-react';
 import { DESTINATION_DATA } from '../data/destinationData';
 
 export default function VoiceAssistant({ isOpen, onClose }) {
@@ -17,11 +17,17 @@ export default function VoiceAssistant({ isOpen, onClose }) {
 
   const recognitionRef = useRef(null);
   const chatEndRef = useRef(null);
+  const transcriptRef = useRef('');
 
   // Auto scroll chat
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
+
+  // Keep transcript ref in sync
+  useEffect(() => {
+    transcriptRef.current = transcript;
+  }, [transcript]);
 
   // Setup Web Speech Recognition API (Hindi hi-IN)
   useEffect(() => {
@@ -48,16 +54,25 @@ export default function VoiceAssistant({ isOpen, onClose }) {
       recognition.onerror = (event) => {
         console.error('Speech recognition error:', event.error);
         setIsListening(false);
-        if (event.error !== 'no-speech') {
-          setErrorMsg('आवाज़ पहचानने में समस्या आई। कृपया पुनः प्रयास करें या टाइप करें।');
+        if (event.error === 'not-allowed') {
+          setErrorMsg('ब्राउज़र में माइक अनुमति (Microphone Permission) बंद है। कृपया एड्रेस बार में माइक आइकॉन पर क्लिक करके Permission allow करें।');
+        } else if (event.error !== 'no-speech') {
+          setErrorMsg('आवाज़ पहचानने में समस्या आई। कृपया पुनः बोलें या टाइप करें।');
         }
       };
 
       recognition.onend = () => {
         setIsListening(false);
+        // Auto send transcript when user finishes speaking
+        const capturedText = transcriptRef.current.trim();
+        if (capturedText) {
+          handleSendMessage(capturedText);
+        }
       };
 
       recognitionRef.current = recognition;
+    } else {
+      setErrorMsg('आपका ब्राउज़र वॉइस इनपुट सपोर्ट नहीं करता। कृपया Google Chrome या Microsoft Edge का प्रयोग करें।');
     }
   }, []);
 
@@ -72,22 +87,20 @@ export default function VoiceAssistant({ isOpen, onClose }) {
   // Handle voice recording toggle
   const toggleListening = () => {
     if (!recognitionRef.current) {
-      setErrorMsg('आपका ब्राउज़र वॉइस रिकॉग्निशन को सपोर्ट नहीं करता। कृपया क्रोम (Chrome) या एज (Edge) का प्रयोग करें।');
+      setErrorMsg('कृपया Google Chrome या Microsoft Edge ब्राउज़र का प्रयोग करें।');
       return;
     }
 
     if (isListening) {
       recognitionRef.current.stop();
       setIsListening(false);
-      if (transcript.trim()) {
-        handleSendMessage(transcript);
-      }
     } else {
       setTranscript('');
+      transcriptRef.current = '';
       try {
         recognitionRef.current.start();
       } catch (err) {
-        console.warn('Recognition already started:', err);
+        console.warn('Recognition start error:', err);
       }
     }
   };
@@ -96,13 +109,12 @@ export default function VoiceAssistant({ isOpen, onClose }) {
   const speakText = (text) => {
     if (!window.speechSynthesis) return;
 
-    window.speechSynthesis.cancel(); // stop existing speech
+    window.speechSynthesis.cancel();
 
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'hi-IN';
-    utterance.rate = 0.95; // slightly relaxed reading pace
+    utterance.rate = 0.95;
 
-    // Try to pick a Hindi voice if available
     const voices = window.speechSynthesis.getVoices();
     const hindiVoice = voices.find(v => v.lang.includes('hi') || v.name.includes('Hindi') || v.lang.includes('IN'));
     if (hindiVoice) {
@@ -123,15 +135,15 @@ export default function VoiceAssistant({ isOpen, onClose }) {
     }
   };
 
-  // Send question to Express backend API
+  // Send question to API
   const handleSendMessage = async (textToSend) => {
     const queryText = (textToSend || transcript).trim();
     if (!queryText || isLoading) return;
 
-    // Add user message to state
     const userMsg = { sender: 'user', text: queryText };
     setMessages(prev => [...prev, userMsg]);
     setTranscript('');
+    transcriptRef.current = '';
     setIsLoading(true);
     setErrorMsg('');
 
@@ -149,12 +161,12 @@ export default function VoiceAssistant({ isOpen, onClose }) {
       setMessages(prev => [...prev, aiMsg]);
       setIsLoading(false);
 
-      // Automatically speak out response (Bonus feature)
+      // Read out loud response
       speakText(aiReply);
 
     } catch (err) {
       console.error('API error:', err);
-      const fallbackReply = 'भीतरगाँव मंदिर कानपुर में स्थित 5वीं शताब्दी का भारत का सबसे पुराना ईंटों का मंदिर है। आप इसके खुलने का समय, मार्ग या इतिहास पूछ सकते हैं।';
+      const fallbackReply = 'भीतरगाँव मंदिर कानपुर में स्थित 5वीं शताब्दी का भारत का सबसे पुराना ईंटों का मंदिर है।';
       setMessages(prev => [...prev, { sender: 'ai', text: fallbackReply }]);
       setIsLoading(false);
       speakText(fallbackReply);
@@ -166,7 +178,6 @@ export default function VoiceAssistant({ isOpen, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-earth-900/70">
       
-      {/* Modal Dialog Container - Solid Earthy Card (No glassmorphism) */}
       <div className="w-full max-w-2xl bg-sandstone-50 rounded-2xl border-2 border-sandstone-300 shadow-2xl flex flex-col h-[600px] max-h-[90vh] overflow-hidden">
         
         {/* Header */}
@@ -194,7 +205,7 @@ export default function VoiceAssistant({ isOpen, onClose }) {
           </button>
         </div>
 
-        {/* Preset Hindi Question Chips */}
+        {/* Preset Chips */}
         <div className="bg-sandstone-100 p-3 border-b border-sandstone-300 overflow-x-auto">
           <span className="text-xs font-semibold text-earth-800 block mb-1.5 font-serif">
             त्वरित प्रश्न (क्लिक करें):
@@ -212,7 +223,7 @@ export default function VoiceAssistant({ isOpen, onClose }) {
           </div>
         </div>
 
-        {/* Chat History Messages */}
+        {/* Chat History */}
         <div className="flex-1 p-4 overflow-y-auto space-y-4 bg-sandstone-50">
           {messages.map((msg, index) => (
             <div
@@ -238,7 +249,6 @@ export default function VoiceAssistant({ isOpen, onClose }) {
               >
                 <p>{msg.text}</p>
                 
-                {/* TTS Play Button for AI Messages */}
                 {msg.sender === 'ai' && (
                   <div className="mt-2 pt-2 border-t border-sandstone-300 flex items-center justify-between text-xs text-terracotta-800">
                     <button
@@ -248,12 +258,12 @@ export default function VoiceAssistant({ isOpen, onClose }) {
                       {isSpeaking ? (
                         <>
                           <VolumeX className="w-3.5 h-3.5 text-terracotta-700 animate-bounce" />
-                          <span>रोकें</span>
+                          <span>ऑडियो रोकें</span>
                         </>
                       ) : (
                         <>
                           <Volume2 className="w-3.5 h-3.5 text-terracotta-700" />
-                          <span>बोलकर सुनें</span>
+                          <span>हिंदी में बोलकर सुनें</span>
                         </>
                       )}
                     </button>
@@ -263,7 +273,6 @@ export default function VoiceAssistant({ isOpen, onClose }) {
             </div>
           ))}
 
-          {/* Thinking Indicator */}
           {isLoading && (
             <div className="flex items-center space-x-3">
               <div className="w-8 h-8 rounded-full bg-terracotta-700 text-sandstone-50 flex items-center justify-center">
@@ -280,16 +289,16 @@ export default function VoiceAssistant({ isOpen, onClose }) {
 
         {/* Live Mic Transcript Bar */}
         {isListening && (
-          <div className="bg-terracotta-100 border-t border-terracotta-300 p-3 text-center text-xs text-terracotta-900 font-medium animate-pulse flex items-center justify-center space-x-2">
+          <div className="bg-terracotta-100 border-t border-terracotta-300 p-3 text-center text-xs text-terracotta-900 font-medium flex items-center justify-center space-x-2">
             <Mic className="w-4 h-4 text-terracotta-700 animate-spin" />
-            <span>आपकी आवाज़ सुनी जा रही है: "{transcript || 'बोलिए...'}"</span>
+            <span>माइक चालू है: "{transcript || 'हिंदी में बोलिए...'}"</span>
           </div>
         )}
 
         {/* Error Alert */}
         {errorMsg && (
-          <div className="bg-red-50 text-red-800 p-2.5 text-xs text-center border-t border-red-200 flex items-center justify-center gap-1">
-            <AlertCircle className="w-3.5 h-3.5" />
+          <div className="bg-red-50 text-red-800 p-2.5 text-xs text-center border-t border-red-200 flex items-center justify-center gap-1 font-medium">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
             <span>{errorMsg}</span>
           </div>
         )}
@@ -297,7 +306,6 @@ export default function VoiceAssistant({ isOpen, onClose }) {
         {/* Input Bar */}
         <div className="p-3 bg-sandstone-100 border-t border-sandstone-300 flex items-center space-x-2">
           
-          {/* Hindi Voice Mic Button */}
           <button
             onClick={toggleListening}
             className={`p-3 rounded-full transition-all flex-shrink-0 ${
@@ -310,7 +318,6 @@ export default function VoiceAssistant({ isOpen, onClose }) {
             {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5 text-ochre-500" />}
           </button>
 
-          {/* Text Input */}
           <input
             type="text"
             value={transcript}
@@ -320,7 +327,6 @@ export default function VoiceAssistant({ isOpen, onClose }) {
             className="flex-1 bg-sandstone-50 border border-sandstone-300 rounded-lg px-4 py-2.5 text-sm text-earth-900 placeholder-earth-700 focus:outline-none focus:border-terracotta-700"
           />
 
-          {/* Submit Button */}
           <button
             onClick={() => handleSendMessage()}
             disabled={!transcript.trim() || isLoading}
