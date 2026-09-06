@@ -22,8 +22,6 @@ if (process.env.GEMINI_API_KEY) {
   } catch (err) {
     console.warn('⚠️ Could not load @google/generative-ai, using intelligent fallback server mode.', err.message);
   }
-} else {
-  console.log('ℹ️ No GEMINI_API_KEY found in .env. Running with specialized Bhitargaon AI knowledge fallback.');
 }
 
 app.post('/api/chat', async (req, res) => {
@@ -71,6 +69,10 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', destination: 'Bhitargaon Temple Tourism AI' });
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Bhitargaon Tourism Server running on http://localhost:${PORT}`);
-});
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`🚀 Bhitargaon Tourism Server running on http://localhost:${PORT}`);
+  });
+}
+
+export default app;
